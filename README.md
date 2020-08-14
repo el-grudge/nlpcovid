@@ -13,3 +13,8 @@
 * CNN.py: convolutional neural network class, creates the CNN classifier
 * GloVeClassifier.py: combination neural network class, creates a CNN+MLP classifier, to be used with glove vectorization
 
+### Results
+
+The following barchart shows the test results of the classification models implemented here:
+
+![alt text](./results/test_accuracies.png)
