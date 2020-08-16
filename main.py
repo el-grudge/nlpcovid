@@ -25,6 +25,7 @@ if __name__ == '__main__':
         test_proportion=0.2,
         cutoff=0,
         # sentence encoder
+        delete_inconsistent=True,
         module_url="https://tfhub.dev/google/universal-sentence-encoder/4",
         model_path='model_storage/sentence_encoder_model.pth',
         load_locally=True,
@@ -60,6 +61,11 @@ if __name__ == '__main__':
     null_after_cleaning = df_train_original.loc[df_train_stances[df_train_stances.text == ''].id]
     null_after_cleaning.to_csv('data/null_after_cleaning.csv')
     df_train_stances = df_train_stances[df_train_stances.text != '']
+
+    # delete inconsistencies
+    if args.delete_inconsistent:
+        inconsistent_tweets = delete_inconsistencies(args, df_train_stances)
+        df_train_stances = df_train_stances.drop(inconsistent_tweets.index)
 
     # Data split
     X_train, X_test, y_train, y_test = train_test_split(df_train_stances['text'], df_train_stances['Stance'],

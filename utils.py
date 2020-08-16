@@ -5,6 +5,10 @@ from CNN import *
 from MLP import *
 from GloVeClassifier import *
 from pathlib import Path
+from sklearn.metrics.pairwise import cosine_similarity
+import tensorflow as tf
+import tensorflow_hub as hub
+import collections
 
 
 def save_misclassified(text, y_test, predicted, output_file):
@@ -141,3 +145,43 @@ def predict_target(args, predictor, classifier, vectorizer):
     index = indices.item()
 
     return vectorizer.target_vocab.lookup_index(index)
+
+
+def delete_inconsistencies(args, covid_M):
+    # sentence encoding
+    if(args.load_locally):
+        sentence_encoder = tf.saved_model.load(args.model_path)
+    else:
+        sentence_encoder = hub.load(args.module_url)
+
+    tf.saved_model.save(sentence_encoder, args.model_path)
+    print("module %s loaded" % args.module_url)
+
+    covid_M['embeddings'] = [sentence_encoder([tweet]) for tweet in covid_M.text]
+
+    # Cosine distance
+    cos_dis = pd.DataFrame(data=cosine_similarity(
+        pd.DataFrame(np.concatenate([np.array(embedding) for embedding in covid_M.embeddings]),
+                     index=covid_M.index)), columns=covid_M.index, index=covid_M.index)
+
+    # identify duplicate tweets
+    similar_tweets = collections.defaultdict(list)
+    [similar_tweets[cos].append(cos_dis[cos_dis[cos] > 0.9].index.tolist()) for cos in cos_dis]
+    [similar_tweets[k][0].remove(k) for k in similar_tweets.keys()]
+    similar_tweets_keys = list(similar_tweets.keys())
+    for k in similar_tweets_keys:
+        if len(similar_tweets[k][0])==0:
+            del similar_tweets[k]
+        else:
+            similar_tweets[k] = similar_tweets[k][0]
+
+    inconsistent_tweets = pd.DataFrame(data=None, index=None, columns=None, dtype=None, copy=False)
+    for key in similar_tweets.keys():
+        for value in similar_tweets[key]:
+            if covid_M.loc[key, 'Stance'] != covid_M.loc[value, 'Stance']:
+                inconsistent_tweets = inconsistent_tweets.append(pd.DataFrame(covid_M.loc[[key], ['Stance','text']]))
+                inconsistent_tweets = inconsistent_tweets.append(pd.DataFrame(covid_M.loc[[value], ['Stance','text']]))
+
+    inconsistent_tweets.to_csv('data/inconsistent_tweets.csv', sep='\t')
+
+    return inconsistent_tweets
