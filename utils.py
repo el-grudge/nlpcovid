@@ -185,3 +185,14 @@ def delete_inconsistencies(args, covid_M):
     inconsistent_tweets.to_csv('data/inconsistent_tweets.csv', sep='\t')
 
     return inconsistent_tweets
+
+
+def get_class_weights(predictor_df):
+    # Class weights
+    class_counts = predictor_df.stance.value_counts().to_dict()
+
+    sorted_counts = sorted(class_counts.items())
+    frequencies = [count for _, count in sorted_counts]
+    class_weights = 1.0 / torch.tensor(frequencies, dtype=torch.float32)
+
+    return class_weights

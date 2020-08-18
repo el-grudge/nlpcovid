@@ -25,7 +25,8 @@ if __name__ == '__main__':
         test_proportion=0.2,
         cutoff=0,
         # sentence encoder
-        delete_inconsistent=True,
+        get_sentence_encoding=True,
+        delete_inconsistent=False,
         module_url="https://tfhub.dev/google/universal-sentence-encoder/4",
         model_path='model_storage/sentence_encoder_model.pth',
         load_locally=True,
@@ -62,9 +63,12 @@ if __name__ == '__main__':
     null_after_cleaning.to_csv('data/null_after_cleaning.csv')
     df_train_stances = df_train_stances[df_train_stances.text != '']
 
+    # get inconsistencies
+    if args.get_sentence_encoding:
+        inconsistent_tweets = delete_inconsistencies(args, df_train_stances)
+
     # delete inconsistencies
     if args.delete_inconsistent:
-        inconsistent_tweets = delete_inconsistencies(args, df_train_stances)
         df_train_stances = df_train_stances.drop(inconsistent_tweets.index)
 
     # Data split
@@ -93,7 +97,6 @@ if __name__ == '__main__':
 
     # Neural Networks
     classifier_classes = ['MLP', 'CNN', 'GloVe']
-    # classifier_classes = ['CNN']
     for args.classifier_class in classifier_classes:
 
         dataset = CovidDataset.load_dataset_and_make_vectorizer(args)
@@ -114,11 +117,13 @@ if __name__ == '__main__':
             # GLOVE_MODEL
             # Use GloVe or randomly initialized embeddings
             if args.classifier_class == 'GloVe':
+                vectorizer_method = 'GloVe'
                 words = vectorizer.predictor_vocab._token_to_idx.keys()
                 embeddings = make_embedding_matrix(glove_filepath=args.glove_filepath,
                                                    words=words)
                 print("Using pre-trained embeddings")
             else:
+                vectorizer_method = 'OneHot'
                 print("Not using pre-trained embeddings")
                 embeddings = None
 
@@ -131,7 +136,7 @@ if __name__ == '__main__':
                 'padding_idx': 0  # GLOVE_MODEL
             }
 
-            classifier_name = args.classifier_class + '_' + with_weight_str
+            classifier_name = args.classifier_class + '_' + vectorizer_method + '_' + with_weight_str
             models.append(classifier_name)
 
             classifier = NLPClassifier(args, dimensions)
