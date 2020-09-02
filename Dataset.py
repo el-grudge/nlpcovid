@@ -94,3 +94,7 @@ class CovidDataset(Dataset):
             number of batches in the dataset
         """
         return len(self) // batch_size
+
+    def update_vectorizer(self, vectorizer_method):
+
+        self._vectorizer.vectorizer_method = vectorizer_method

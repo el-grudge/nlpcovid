@@ -39,7 +39,7 @@ def generate_batches(dataset, batch_size, shuffle=False, drop_last=True):
             out_data_dict[name] = data_dict[name]
         yield out_data_dict
 
-
+'''
 def NLPClassifier(args, dimensions):
     """Builds a classifier
 
@@ -56,9 +56,20 @@ def NLPClassifier(args, dimensions):
         scheduler
     """
     if args.classifier_class == 'MLP':
+
+        
         classifier = MLPClassifier(input_dim=dimensions['input_dim'],
                                    hidden_dim=dimensions['hidden_dim'],
                                    output_dim=dimensions['output_dim'])
+        
+        classifier = MLPClassifier(input_dim=dimensions['input_dim'],
+                                   hidden_dim=dimensions['hidden_dim'],
+                                   output_dim=dimensions['output_dim'],
+                                   embedding_size=args.embedding_size,
+                                   num_embeddings=dimensions['input_dim'],
+                                   dropout_p=args.dropout_p,
+                                   pretrained_embeddings=dimensions['pretrained_embeddings'])
+
 
     elif args.classifier_class == 'CNN':
         classifier = CNNClassifier(initial_num_channels=dimensions['input_dim'],
@@ -77,6 +88,7 @@ def NLPClassifier(args, dimensions):
                                      padding_idx=dimensions['padding_idx'])
 
     return classifier
+    '''
 
 
 def make_embedding_matrix(glove_filepath, words):
@@ -196,3 +208,52 @@ def get_class_weights(predictor_df):
     class_weights = 1.0 / torch.tensor(frequencies, dtype=torch.float32)
 
     return class_weights
+
+
+
+def NLPClassifier(args, dimensions):
+    """Builds a classifier
+
+    Args:
+        args: main arguments
+        classifier_class: classifier class to be defined
+        dimensions: neural network dimensions
+        loss_func: loss function to be used
+
+    Returns:
+        classifier: built classfier
+        loss_func: loss function
+        optimizer: optimizer
+        scheduler
+    """
+    if args.classifier_class == 'MLP':
+        classifier = MLPClassifier(input_dim=dimensions['input_dim'],
+                                   hidden_dim=dimensions['hidden_dim'],
+                                   output_dim=dimensions['output_dim'],
+                                   embedding_size=args.embedding_size,
+                                   num_embeddings=dimensions['input_dim'],
+                                   dropout_p=args.dropout_p,
+                                   pretrained_embeddings=dimensions['pretrained_embeddings'],
+                                   padding_idx=dimensions['padding_idx'],
+                                   vectorizer_method=args.vectorizer_method)
+
+    elif args.classifier_class == 'CNN':
+        if args.vectorizer_method == 'OneHot':
+            classifier = CNNClassifier(initial_num_channels=dimensions['input_dim'],
+                                       hidden_dim=args.hidden_dim,
+                                       num_classes=dimensions['output_dim'],
+                                       num_channels=args.num_channels,
+                                       dropout_p=args.dropout_p)
+
+        elif args.vectorizer_method == 'GloVe':
+            # GLOVE_MODEL
+            classifier = GloVeClassifier(embedding_size=args.embedding_size,
+                                         num_embeddings=dimensions['input_dim'],
+                                         num_channels=args.num_channels,
+                                         hidden_dim=args.hidden_dim,
+                                         num_classes=dimensions['output_dim'],
+                                         dropout_p=args.dropout_p,
+                                         pretrained_embeddings=dimensions['pretrained_embeddings'],
+                                         padding_idx=dimensions['padding_idx'])
+
+    return classifier

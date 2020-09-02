@@ -66,7 +66,7 @@ class GloVeClassifier(nn.Module):
         """
 
         # embed and permute so features are channels
-        x_embedded = self.emb(x_in).permute(0, 2, 1)
+        x_embedded = self.emb(x_in.long()).permute(0, 2, 1)
 
         features = self.convnet(x_embedded)
 

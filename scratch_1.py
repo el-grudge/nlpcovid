@@ -6,7 +6,6 @@ from utils import *
 from Dataset import *
 import torch.optim as optim
 from sklearn.model_selection import train_test_split
-import scipy
 from sklearn import metrics
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.linear_model import LogisticRegression, SGDClassifier
@@ -26,13 +25,13 @@ if __name__ == '__main__':
         test_proportion=0.2,
         cutoff=0,
         # sentence encoder
-        get_sentence_encoding=True,
+        get_sentence_encoding=False,
         delete_inconsistent=False,
         module_url="https://tfhub.dev/google/universal-sentence-encoder/4",
         model_path='model_storage/sentence_encoder_model.pth',
         load_locally=True,
         # glove embeddings
-        glove_filepath='data/glove.6B.100d.txt',
+        glove_filepath='data/glove.twitter.27B.100d.txt',
         # neural nets
         classifier_class='CNN',
         learning_rate=0.001,
@@ -72,101 +71,166 @@ if __name__ == '__main__':
     if args.delete_inconsistent:
         df_train_stances = df_train_stances.drop(inconsistent_tweets.index)
 
-    # create embeddings dataset
-    embeddings_dataset = []
-    for _, row in df_train_stances.iterrows():
-        embeddings_dataset.append([row.id, row.Stance, row.embeddings.numpy()[0]])
-
-    dataset_embedding = pd.DataFrame(embeddings_dataset, columns=['id', 'stance', 'embeddings'])
-    embedding = dataset_embedding.embeddings.apply(pd.Series)
-    dataset_df = pd.concat([dataset_embedding.stance, embedding], axis=1)
-    dataset_df.index = dataset_embedding.id
-
-    # sentence encoder Data split
-    X_train, X_test, y_train, y_test = train_test_split(dataset_df.loc[:, dataset_df.columns != 'stance'], dataset_df['stance'],
+    # Data split
+    X_train, X_test, y_train, y_test = train_test_split(df_train_stances['text'], df_train_stances['Stance'],
                                                         random_state=0, test_size=0.2)
+    train = pd.concat([X_train, y_train], axis=1)
+    train['split'] = 'train'
+    test = pd.concat([X_test, y_test], axis=1)
+    test['split'] = 'test'
+    final_predictors = pd.concat([train, test])
+    final_predictors['id'] = final_predictors.index
 
-    X_train = torch.tensor(np.matrix(X_train)).float()
-    X_test = torch.tensor(np.matrix(X_test)).float()
+    # Fill the 'split' value for rows with null 'split' value
+    for i in final_predictors[pd.isnull(final_predictors.split)].index:
+        final_predictors.loc[i, 'split'] = final_predictors.loc[i - 1, 'split']
 
-    y_train = torch.tensor(y_train.values)
-    y_test = torch.tensor(y_test.values)
+    # Convert target value from integer to string
+    final_predictors['Stance'] = final_predictors.Stance.astype(str)
+
+    # Write preprocessed dataset to csv file
+    final_predictors.to_csv(args.clean_dataset_csv, index=False)
 
     # PHASE 2- Classifications
     accuracy_scores = {"train_scores": [], "test_scores": []}
     models = []
 
     # Neural Networks
-    # classifier_classes = ['MLP', 'CNN', 'GloVe']
+    #classifier_classes = ['MLP', 'CNN', 'GloVe']
     classifier_classes = ['MLP']
     for args.classifier_class in classifier_classes:
 
-        loss_func = nn.CrossEntropyLoss()
-        with_weights = [False, True]
-        for args.weight in with_weights:
+        dataset = CovidDataset.load_dataset_and_make_vectorizer(args)
 
+        # Neural Networks
+        vectorizer = dataset.get_vectorizer()
+
+        loss_func = nn.CrossEntropyLoss()
+        #with_weights = [False, True]
+        with_weights = [False]
+        for args.weight in with_weights:
             if args.weight:
-                loss_func.weight = get_class_weights(dataset_df)
+                loss_func.weight = dataset.class_weights
                 with_weight_str = 'weighted'
             else:
                 loss_func.weight = None
                 with_weight_str = 'not_weighted'
 
+            # GLOVE_MODEL
+            # Use GloVe or randomly initialized embeddings
+            '''
+            if args.classifier_class == 'GloVe':
+                vectorizer_method = 'GloVe'
+                words = vectorizer.predictor_vocab._token_to_idx.keys()
+                embeddings = make_embedding_matrix(glove_filepath=args.glove_filepath,
+                                                   words=words)
+                print("Using pre-trained embeddings")
+            else:
+                vectorizer_method = 'OneHot'
+                print("Not using pre-trained embeddings")
+                embeddings = None
+            '''
+            vectorizer_method = 'GloVe'
+            words = vectorizer.predictor_vocab._token_to_idx.keys()
+            embeddings = make_embedding_matrix(glove_filepath=args.glove_filepath,
+                                               words=words)
+            print("Using pre-trained embeddings")
+
+
             dimensions = {
-                'input_dim': X_train.shape[1],
+                'input_dim': len(vectorizer.predictor_vocab),
                 'hidden_dim': args.hidden_dim,
-                'output_dim': dataset_df['stance'].nunique()
+                'output_dim': len(vectorizer.target_vocab),
+                'dropout_p': args.dropout_p,  # GLOVE_MODEL
+                'pretrained_embeddings': embeddings,  # GLOVE_MODEL
+                'padding_idx': 0  # GLOVE_MODEL
             }
 
-            classifier_name = args.classifier_class + '_' + with_weight_str
+            classifier_name = args.classifier_class + '_' + vectorizer_method + '_' + with_weight_str
             models.append(classifier_name)
 
             classifier = NLPClassifier(args, dimensions)
-
-            # Forward pass, get our logits
-            logps = classifier(X_train)
-            # Calculate the loss with the logits and the labels
-            loss = loss_func(logps, y_train)
-
-            loss.backward()
-
             optimizer = optim.Adam(classifier.parameters(), lr=args.learning_rate)
 
             epoch_bar = tqdm(desc='training routine',
                              total=args.num_epochs,
                              position=0)
 
-            train_losses = []
-            test_losses = []
-            test_accuracies = []
-
             for epoch_index in range(args.num_epochs):
-                optimizer.zero_grad()
 
-                output = classifier.forward(X_train)
-                loss = loss_func(output, y_train)
-                loss.backward()
-                train_loss = loss.item()
-                train_losses.append(train_loss)
+                dataset.set_split('train')
+                train_bar = tqdm(desc='split=train',
+                                 total=dataset.get_num_batches(args.batch_size),
+                                 position=1,
+                                 leave=True)
 
-                optimizer.step()
-
-                # Turn off gradients     for validation, saves memory and computations
-                with torch.no_grad():
-                    classifier.eval()
-                    log_ps = classifier(X_test)
-                    test_loss = loss_func(log_ps, y_test)
-                    test_losses.append(test_loss)
-
-                    ps = torch.exp(log_ps)
-                    top_p, top_class = ps.topk(1, dim=1)
-                    equals = top_class == y_test.view(*top_class.shape)
-                    test_accuracy = torch.mean(equals.float())
-                    test_accuracies.append(test_accuracy)
-
+                # setup: batch generator, set loss and acc to 0, set train mode on
+                batch_generator = generate_batches(dataset, batch_size=args.batch_size)
+                running_loss = 0.0
+                running_acc = 0.0
                 classifier.train()
 
-                print(f"Epoch: {epoch_index + 1}/{args.num_epochs}.. ",
-                      f"Training Loss: {train_loss:.3f}.. ",
-                      f"Test Loss: {test_loss:.3f}.. ",
-                      f"Test Accuracy: {test_accuracy:.3f}")
+                for batch_index, batch_dict in enumerate(batch_generator):
+                    # the training routine is these 5 steps:
+                    # --------------------------------------
+                    # step 1. zero the gradients
+                    optimizer.zero_grad()
+
+                    # step 2. compute the output
+                    y_pred = classifier(batch_dict['x_data'])
+
+                    # step 3. compute the loss
+                    loss = loss_func(y_pred, batch_dict['y_target'])
+                    loss_t = loss.item()
+                    running_loss += (loss_t - running_loss) / (batch_index + 1)
+
+                    # step 4. use loss to produce gradients
+                    loss.backward()
+
+                    # step 5. use optimizer to take gradient step
+                    optimizer.step()
+                    # -----------------------------------------
+                    # compute the accuracy
+                    acc_t = compute_accuracy(y_pred, batch_dict['y_target'])
+                    running_acc += (acc_t - running_acc) / (batch_index + 1)
+
+                    # update bar
+                    train_bar.set_postfix(loss=running_loss,
+                                          acc=running_acc,
+                                          epoch=epoch_index)
+                    train_bar.update()
+
+                torch.save(classifier.state_dict(), args.model_state_file)
+
+                epoch_bar.update()
+
+            # Test
+            classifier.load_state_dict(torch.load(args.model_state_file))
+
+            test_predictor = dataset.test_df
+
+            text = dataset.predictor_df['text']
+            text.index = dataset.predictor_df['id']
+
+            results = []
+            for _, value in test_predictor.iterrows():
+                prediction = predict_target(args,
+                                            value['text'],
+                                            classifier,
+                                            vectorizer)
+                results.append([value['id'], prediction, value['Stance']])
+
+            results = pd.DataFrame(results, columns=['id', 'predicted', 'Stance'])
+            results.index = results.id
+            test_accuracy = pd.Series.eq(results.predicted, results.Stance).sum().item() / results.shape[0]
+            accuracy_scores['train_scores'].append(running_acc / 100)
+            accuracy_scores['test_scores'].append(test_accuracy)
+
+            save_misclassified(text, results.Stance, results.predicted, '{}_misclassified'.format(classifier_name))
+            print('Accuracy of {} classifier on training set: {:.4f}'.format(classifier_name, running_acc / 100))
+            print('Accuracy of {} classifier on test set: {:.4f}'.format(classifier_name, test_accuracy))
+            print('Classification report')
+            print(metrics.classification_report(results.Stance, results.predicted,
+                                                target_names=df_train_stances['Stance'].astype(str).unique()))
+            print('Confusion matrix')
+            print(metrics.confusion_matrix(results.Stance, results.predicted))
