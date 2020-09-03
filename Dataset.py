@@ -96,5 +96,9 @@ class CovidDataset(Dataset):
         return len(self) // batch_size
 
     def update_vectorizer(self, vectorizer_method):
+        """Update vectorizer method
 
+                Args:
+                    vectorizer_method
+        """
         self._vectorizer.vectorizer_method = vectorizer_method
